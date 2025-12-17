@@ -1,0 +1,86 @@
+name: 🔍 Almusbah Product Monitor
+
+on:
+  # تشغيل تلقائي كل ساعة
+  schedule:
+    - cron: '0 * * * *'  # في بداية كل ساعة
+
+  # السماح بالتشغيل اليدوي
+  workflow_dispatch:
+
+  # تشغيل عند الـ push (للاختبار)
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+
+jobs:
+  monitor:
+    name: 🕷️ مراقبة المنتجات
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. سحب الكود
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. إعداد Python
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # 3. تثبيت المكتبات
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 4. تشغيل البرنامج
+      - name: 🚀 Run Monitor
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          echo "🔍 بدء مراقبة المنتجات..."
+          python main.py
+          echo "✅ اكتمل الفحص"
+
+      # 5. حفظ قاعدة البيانات
+      - name: 💾 Commit Database Changes
+        run: |
+          git config --local user.email "bot@github-actions"
+          git config --local user.name "Monitor Bot"
+          git add products.db backups/*.db 2>/dev/null || true
+          git diff --quiet && git diff --staged --quiet || \
+            (git commit -m "🤖 تحديث قاعدة البيانات - $(date +'%Y-%m-%d %H:%M:%S')" && echo "✅ تم حفظ التغييرات")
+
+      # 6. رفع التغييرات
+      - name: 📤 Push Changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref }}
+
+      # 7. حفظ السجلات كـ artifact
+      - name: 📋 Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-logs-${{ github.run_number }}
+          path: |
+            monitor.log
+            products.db
+          retention-days: 7
+
+      # 8. إرسال إشعار في حالة الفشل
+      - name: 🚨 Notify on Failure
+        if: failure()
+        run: |
+          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d text="⚠️ فشل تشغيل البوت - تحقق من السجلات في GitHub Actions"
