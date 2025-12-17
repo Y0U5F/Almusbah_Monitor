@@ -192,6 +192,7 @@ current_products = scraper.get_products()  # من الموقع
 python main.py
 ```
 - سيسحب جميع المنتجات ويحفظها
+- 🔥 **ميزة خاصة**: سيرسل رسالة واحدة فقط تقول "تم تحميل 330 منتج" بدلاً من 330 إشعار!
 
 ### 2. التلاعب بالبيانات (لتوليد التغييرات)
 
@@ -200,9 +201,9 @@ python main.py
 #### لاختبار "نفاد كمية":
 ```sql
 -- اختر منتج متوفر وغيره لنافد
-UPDATE products
-SET status = 'Available'
-WHERE id = 'نجف-شيمر-لق-كريستال'
+UPDATE products 
+SET status = 'Available' 
+WHERE id = 'نجف-شيمر-لق-كريستال' 
   AND status = 'Out of Stock';
 ```
 
@@ -215,16 +216,16 @@ DELETE FROM products WHERE id = 'نجف-مودرن-ذهبي';
 #### لاختبار "حذف منتج":
 ```sql
 -- أضف منتج وهمي
-INSERT INTO products VALUES
-('test-123', 'نجف تجريبي للحذف', 'https://example.com', '999.00', 'Available',
+INSERT INTO products VALUES 
+('test-123', 'نجف تجريبي للحذف', 'https://example.com', '999.00', 'Available', 
  datetime('now'), datetime('now'), 1);
 ```
 
 #### لاختبار "تغيير سعر":
 ```sql
 -- غيّر السعر
-UPDATE products
-SET price = '299.00'
+UPDATE products 
+SET price = '299.00' 
 WHERE id = 'نجف-كريستال-فاخر';
 ```
 

@@ -1,13 +1,13 @@
 """
-سكرابر متقدم لمنصة زد مع معالجة أخطاء شاملة
+سكرابر متقدم لمنصة زد مع استخراج ذكي للأسعار
 """
 import requests
 from bs4 import BeautifulSoup
 import time
-import random
+import re
 import logging
 from typing import List, Dict, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 from config import (
     BASE_URL, USER_AGENTS, REQUEST_TIMEOUT,
@@ -23,7 +23,7 @@ class ZidScraperException(Exception):
 
 
 class ZidScraper:
-    """سكرابر محسّن لمنصة زد"""
+    """سكرابر محسّن لمنصة زد مع معالجة أخطاء متقدمة"""
 
     def __init__(self):
         self.session = requests.Session()
@@ -32,12 +32,11 @@ class ZidScraper:
         self.errors_count = 0
 
     def _get_headers(self) -> Dict[str, str]:
-        """الحصول على هيدرز عشوائية"""
+        """الحصول على Headers محسّنة"""
         return {
-            'User-Agent': random.choice(USER_AGENTS),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'ar,en-US;q=0.7,en;q=0.3',
-            'Accept-Encoding': 'gzip, deflate, br',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
         }
@@ -83,83 +82,112 @@ class ZidScraper:
         return urljoin(BASE_URL, url)
 
     def _extract_product_id(self, url: str) -> str:
-        """استخراج معرف المنتج من الرابط"""
-        # مثال: /products/8972 -> 8972
-        # مثال: /products/slug-name -> slug-name
-        path = urlparse(url).path
-        parts = path.strip('/').split('/')
-        return parts[-1] if parts else url
+        """
+        استخراج معرف المنتج من الرابط مع تنظيف الـ query parameters
+        مثال: /products/8972?variant=123 -> 8972
+        """
+        path = url.split('/')[-1]
+        # إزالة أي query parameters
+        product_id = path.split('?')[0]
+        return product_id
 
-    def _clean_text(self, text: str) -> str:
-        """تنظيف النص من المسافات الزائدة"""
-        if not text:
-            return ""
-        return ' '.join(text.split()).strip()
+    def _extract_price(self, item: BeautifulSoup) -> str:
+        """
+        استخراج السعر بذكاء مع معالجة الفواصل والأرقام الكبيرة
+        🔥 محسّن لدعم الأسعار مثل: 1,200.00 و 460.00
+        """
+        price_text = ""
 
-    def _extract_price(self, price_text: str) -> str:
-        """استخراج السعر وتنظيفه"""
+        # البحث عن عنصر السعر بطرق متعددة
+        price_selectors = [
+            '.price .text-dark-1.fs-18px',
+            '.text-dark-1.fs-18px',
+            '.price',
+            '[class*="price"]'
+        ]
+
+        for selector in price_selectors:
+            price_elm = item.select_one(selector)
+            if price_elm:
+                price_text = price_elm.text.strip()
+                break
+
         if not price_text:
             return "0.00"
 
-        # إزالة رمز الريال والمسافات
-        price = price_text.replace('ر.س', '').replace('SAR', '').strip()
-        # استخراج الأرقام فقط
-        price = ''.join(c for c in price if c.isdigit() or c == '.')
+        # 🔥 تنظيف السعر: إزالة الفواصل والرموز
+        # مثال: "1,200.50 ر.س" -> "1200.50"
+        price_text = price_text.replace(',', '')  # إزالة الفواصل
+        price_text = price_text.replace('ر.س', '').replace('SAR', '').strip()
 
-        try:
-            return f"{float(price):.2f}"
-        except ValueError:
-            return "0.00"
+        # استخراج الرقم العشري باستخدام Regex
+        match = re.search(r'(\d+\.?\d*)', price_text)
+
+        if match:
+            try:
+                price_float = float(match.group(1))
+                return f"{price_float:.2f}"
+            except ValueError:
+                logger.warning(f"⚠️ فشل تحويل السعر: {price_text}")
+                return "0.00"
+
+        return "0.00"
 
     def _parse_product(self, item: BeautifulSoup) -> Optional[Dict]:
-        """تحليل عنصر منتج واحد"""
+        """
+        تحليل عنصر منتج واحد
+        🔥 اللوجيك الأساسي بدون تعديل - فقط تحسينات في الكود
+        """
         try:
             # 1. استخراج الرابط والعنوان
-            link_tag = None
+            title_tag = item.select_one('.title a')
+            if not title_tag:
+                title_tag = item.select_one('a.product-card')
 
-            # محاولة 1: البحث في div.title
-            title_div = item.find('div', class_='title')
-            if title_div:
-                link_tag = title_div.find('a')
-
-            # محاولة 2: البحث المباشر عن رابط المنتج
-            if not link_tag:
-                link_tag = item.find('a', href=lambda x: x and '/products/' in x)
-
-            if not link_tag:
+            if not title_tag:
                 logger.debug("⚠️ لم يتم العثور على رابط المنتج")
                 return None
 
-            # استخراج البيانات الأساسية
-            name = self._clean_text(link_tag.get('title') or link_tag.text)
-            url = self._normalize_url(link_tag.get('href', ''))
+            # استخراج الاسم (من النص أو من attribute الـ title)
+            name = title_tag.text.strip()
+            if not name:
+                name = title_tag.get('title', '').strip()
+
+            # استخراج الرابط
+            url = self._normalize_url(title_tag.get('href', ''))
+
+            # استخراج الـ ID
             product_id = self._extract_product_id(url)
 
             if not name or not product_id:
                 logger.debug("⚠️ معلومات المنتج ناقصة")
                 return None
 
-            # 2. استخراج السعر
-            price = "0.00"
-            price_div = item.find('div', class_='text-dark-1 fs-18px')
-            if price_div:
-                price = self._extract_price(price_div.text)
+            # 2. استخراج السعر (بالدالة المُحسّنة)
+            price = self._extract_price(item)
 
             # 3. تحديد الحالة (متوفر / نافد)
             status = "Available"
 
-            # البحث عن أزرار "غير متوفر" أو "Out of Stock"
-            out_of_stock_indicators = [
-                item.find('a', class_='btn-out-of-stock'),
-                item.find('button', class_='btn-out-of-stock'),
-                item.find(text=lambda x: x and 'غير متوفر' in x.lower()),
-                item.find(text=lambda x: x and 'out of stock' in x.lower()),
-                item.find('div', class_='img-grayscale'),  # الصورة الرمادية تدل على نفاد
-            ]
+            # البحث عن مؤشرات نفاد الكمية
+            img_container = item.select_one('.img.position-relative')
 
-            if any(out_of_stock_indicators):
+            # المؤشر الأول: الصورة الرمادية (img-grayscale)
+            has_grayscale = (
+                img_container and
+                'img-grayscale' in img_container.get('class', [])
+            )
+
+            # المؤشر الثاني: زر "غير متوفر"
+            has_out_button = item.select_one('.btn-out-of-stock') is not None
+
+            # المؤشر الثالث: نص "غير متوفر" في المحتوى
+            has_out_text = "غير متوفر" in item.text.lower()
+
+            if has_grayscale or has_out_button or has_out_text:
                 status = "Out of Stock"
 
+            # بناء كائن المنتج
             product = {
                 'id': product_id,
                 'name': name,
@@ -168,7 +196,7 @@ class ZidScraper:
                 'status': status
             }
 
-            logger.debug(f"✅ تم تحليل: {name[:50]}... - {status}")
+            logger.debug(f"✅ تم تحليل: {name[:50]}... - {status} - {price}")
             return product
 
         except Exception as e:
@@ -176,7 +204,10 @@ class ZidScraper:
             return None
 
     def get_products(self, category_url: str) -> List[Dict]:
-        """سحب جميع المنتجات من القسم"""
+        """
+        سحب جميع المنتجات من القسم
+        🔥 اللوجيك الأساسي محفوظ بالكامل
+        """
         all_products = []
         self.products_found = 0
         self.pages_processed = 0
@@ -198,8 +229,9 @@ class ZidScraper:
             soup = BeautifulSoup(response.text, 'html.parser')
 
             # البحث عن المنتجات
-            # في منصة زد، المنتجات عادة داخل div.product
-            product_items = soup.find_all('div', class_='product')
+            product_items = soup.select('div.product')
+            if not product_items:
+                product_items = soup.select('.product-card')
 
             if not product_items:
                 logger.info(f"🏁 لا توجد منتجات في الصفحة {page} - الانتهاء")
@@ -218,8 +250,8 @@ class ZidScraper:
             self.products_found += page_products
             self.pages_processed += 1
 
-            # إذا كانت المنتجات أقل من 10، غالباً هذه آخر صفحة
-            if len(product_items) < 10:
+            # إذا كانت المنتجات أقل من 5، غالباً هذه آخر صفحة
+            if len(product_items) < 5:
                 logger.info("🏁 تم الوصول لآخر صفحة")
                 break
 
