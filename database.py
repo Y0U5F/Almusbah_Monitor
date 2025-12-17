@@ -113,6 +113,7 @@ class DatabaseManager:
 
             return {
                 row['id']: {
+                    'id': row['id'],
                     'name': row['name'],
                     'url': row['url'],
                     'price': row['price'],
